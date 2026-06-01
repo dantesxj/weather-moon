@@ -2723,6 +2723,21 @@ function wmFormatWind(speed, units) {
   return units === 'celsius' ? `${v} km/h` : `${v} mph`;
 }
 
+function wmFormatWindShort(speed) {
+  if (speed == null || Number.isNaN(Number(speed))) return '';
+  return String(Math.round(Number(speed)));
+}
+
+function wmExpandChevronHtml(pointUp = false) {
+  const d = pointUp ? 'M3 8 L12 4 L21 8' : 'M3 4 L12 8 L21 4';
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 12" width="28" height="12" ` +
+    `class="wm-expand-chevron-svg" aria-hidden="true">` +
+    `<path d="${d}" fill="none" stroke="currentColor" stroke-width="1.5" ` +
+    `stroke-linecap="round" stroke-linejoin="round"/></svg>`
+  );
+}
+
 function wmFormatHumidity(n) {
   if (n == null || Number.isNaN(Number(n))) return '—';
   return `${Math.round(Number(n))}%`;
@@ -3621,50 +3636,60 @@ class Plugin extends AppPlugin {
       const hr = new Date(h.time);
       const label = hr.toLocaleTimeString([], { hour: 'numeric' });
       const pPct = wmFormatPrecipPct(h.precip, true) || '💧 0%';
+      const windVal = wmFormatWindShort(h.wind);
+      const windBit = windVal ? `💨 ${windVal}` : '';
       cell.innerHTML =
         `<div>${wmHourWeatherIcon(h.code, h.time, bundle.sunrise, bundle.sunset, 18)}</div>` +
         `<div class="wm-hour-t">${this._escapeHtml(label)}</div>` +
-        `<div class="wm-hour-t">${wmFormatTemp(h.temp, units)}</div>` +
-        `<div class="wm-hour-p">${pPct}</div>`;
+        `<div class="wm-hour-t wm-hour-temp">${wmFormatTemp(h.temp, units)}</div>` +
+        `<div class="wm-hour-meta">${pPct}</div>` +
+        (windBit ? `<div class="wm-hour-meta">${windBit}</div>` : '');
       row.appendChild(cell);
     }
     card.appendChild(row);
   }
 
-  _appendPopoverExpandSection(card, bundle, units, useGlobalWx) {
-    const wrap = document.createElement('div');
-    wrap.className = 'wm-expand-section';
+  _fillExpandSection(host, bundle, units, useGlobalWx) {
+    if (!host || host.dataset.wmBuilt === '1') return;
+    host.innerHTML = '';
     let chartCtrl = null;
     if (!bundle.isHistorical) {
-      chartCtrl = this._appendWeatherCharts(wrap, bundle, units);
+      chartCtrl = this._appendWeatherCharts(host, bundle, units);
     }
     if (bundle.daily?.length) {
-      this._appendDailyTiles(wrap, bundle, units, useGlobalWx, chartCtrl);
+      this._appendDailyTiles(host, bundle, units, useGlobalWx, chartCtrl);
     }
-    if (wrap.childNodes.length) card.appendChild(wrap);
-    return wrap.childNodes.length > 0;
+    host.dataset.wmBuilt = '1';
   }
 
-  _appendExpandToggle(card, positionFn, show) {
-    if (!show) return;
+  _appendExpandToggle(shell, card, expandHost, bundle, units, useGlobalWx, positionFn) {
+    if (!shell || !card || !expandHost) return;
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'wm-expand-btn wm-detail-line';
+    btn.className = 'wm-expand-btn';
     btn.setAttribute('aria-expanded', 'false');
-    btn.innerHTML =
-      `<span class="wm-expand-label">More forecast</span>` +
-      `<span class="wm-expand-chevron" aria-hidden="true">▾</span>`;
+    btn.setAttribute('aria-label', 'Show charts and 10-day forecast');
+    const chevron = document.createElement('span');
+    chevron.className = 'wm-expand-chevron';
+    chevron.innerHTML = wmExpandChevronHtml(false);
+    btn.appendChild(chevron);
     btn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      const open = card.classList.toggle('wm-card--expanded');
+      const open = !shell.classList.contains('wm-shell--popover-expanded');
+      shell.classList.toggle('wm-shell--popover-expanded', open);
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-      btn.querySelector('.wm-expand-label').textContent = open ? 'Less' : 'More forecast';
+      btn.setAttribute(
+        'aria-label',
+        open ? 'Hide charts and 10-day forecast' : 'Show charts and 10-day forecast'
+      );
+      chevron.innerHTML = wmExpandChevronHtml(open);
+      if (open) this._fillExpandSection(expandHost, bundle, units, useGlobalWx);
       try {
         positionFn?.();
       } catch (_) {}
     });
-    card.appendChild(btn);
+    shell.appendChild(btn);
   }
 
   async _mergeTodayDashboard(bundle, targetKey, useGlobalWx) {
@@ -3894,15 +3919,30 @@ class Plugin extends AppPlugin {
     const lo = wmFormatTemp(bundle.lo, this._settings.units);
     const cond = (bundle.label || '—').toLowerCase();
     const moonBit = `${moon.daysToEvent}d → ${wmMoonEventEmoji(moon.eventLabel)}`;
-    return (
+    const precipBit =
+      bundle.precip != null && !Number.isNaN(Number(bundle.precip))
+        ? `💧 ${Math.round(Number(bundle.precip))}%`
+        : '';
+    const windBit =
+      bundle.wind != null && !Number.isNaN(Number(bundle.wind))
+        ? `💨 ${wmFormatWindShort(bundle.wind)}`
+        : '';
+    let html =
       `<span class="wm-status-readout">` +
       `<span class="wm-status-temps">${hi}<span class="wm-status-sep"> / </span>${lo}</span>` +
       `<span class="wm-status-dot">·</span>` +
-      `<span class="wm-status-cond">${this._escapeHtml(cond)}</span>` +
+      `<span class="wm-status-cond">${this._escapeHtml(cond)}</span>`;
+    if (precipBit) {
+      html += `<span class="wm-status-dot">·</span><span class="wm-status-meta">${precipBit}</span>`;
+    }
+    if (windBit) {
+      html += `<span class="wm-status-dot">·</span><span class="wm-status-meta">${windBit}</span>`;
+    }
+    html +=
       `<span class="wm-status-dot">·</span>` +
       `<span class="wm-status-moon">${this._escapeHtml(moonBit)}</span>` +
-      `</span>`
-    );
+      `</span>`;
+    return html;
   }
 
   _escapeHtml(s) {
@@ -3926,9 +3966,13 @@ class Plugin extends AppPlugin {
     try {
       const sunTip = bundle ? wmSunLine(bundle.sunrise, bundle.sunset) : '';
       this._statusItem.setHtmlLabel?.(this._statusReadoutHtml(bundle));
+      const precipTip =
+        bundle?.precip != null ? ` · 💧 ${Math.round(Number(bundle.precip))}%` : '';
+      const windTip =
+        bundle?.wind != null ? ` · 💨 ${wmFormatWind(bundle.wind, this._settings.units)}` : '';
       this._statusItem.setTooltip?.(
         bundle
-          ? `Weather — ${bundle.label}${sunTip ? ` · ${sunTip}` : ''}; click for forecast`
+          ? `Weather — ${bundle.label}${precipTip}${windTip}${sunTip ? ` · ${sunTip}` : ''}; click for forecast`
           : 'Weather & Moon — click to configure'
       );
     } catch (_) {}
@@ -4173,6 +4217,7 @@ class Plugin extends AppPlugin {
     const panelRoot = panelEl?.closest?.('.panel') || panelEl;
     if (!panelRoot) return;
 
+    let syncTimer = null;
     const sync = () => {
       if (!this._panelStates.has(state.panelId)) return;
       const activeRecord = state.panel?.getActiveRecord?.();
@@ -4187,22 +4232,29 @@ class Plugin extends AppPlugin {
 
       const clusterOk =
         state.titleCluster?.isConnected && state.titleCluster.nextElementSibling === titleEl;
-      if (!clusterOk) {
-        this._mountTitleCluster(state, activeRecord, panelRoot);
-      }
+      if (clusterOk) return;
+      this._mountTitleCluster(state, activeRecord, panelRoot);
+    };
+
+    const scheduleSync = () => {
+      if (syncTimer) clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        syncTimer = null;
+        sync();
+      }, 160);
     };
 
     state.titleAnchorObserver = new MutationObserver(() => {
-      try {
-        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(sync);
-        else sync();
-      } catch (_) {
-        sync();
-      }
+      scheduleSync();
     });
+    const observeRoot = panelRoot.querySelector?.('.id--h1-area, .panel-heading, .panel-bar') || panelRoot;
     try {
-      state.titleAnchorObserver.observe(panelRoot, { childList: true, subtree: true });
-    } catch (_) {}
+      state.titleAnchorObserver.observe(observeRoot, { childList: true, subtree: true });
+    } catch (_) {
+      try {
+        state.titleAnchorObserver.observe(panelRoot, { childList: true, subtree: true });
+      } catch (_) {}
+    }
     sync();
   }
 
@@ -4288,6 +4340,9 @@ class Plugin extends AppPlugin {
       this._renderTitleCluster(state, null);
       return;
     }
+    if (state._titleFetchKey === state.journalDateKey && state._titleFetchInflight) {
+      return state._titleFetchInflight;
+    }
     try {
       if (typeof globalThis.thymerExtInMobileLoadGrace === 'function' && globalThis.thymerExtInMobileLoadGrace()) {
         setTimeout(() => this._refreshPanelTitle(state), 3000);
@@ -4295,14 +4350,25 @@ class Plugin extends AppPlugin {
       }
     } catch (_) {}
     this._maybeAutoPinDay(state.journalDateKey);
-    let bundle = null;
+    state._titleFetchKey = state.journalDateKey;
+    const p = (async () => {
+      let bundle = null;
+      try {
+        bundle = await this._fetchWeatherBundle(state.journalDateKey);
+      } catch (e) {
+        console.warn('[Weather & Moon] journal date fetch', e);
+      }
+      if (!this._panelStates.has(state.panelId)) return;
+      if (state.journalDateKey !== state._titleFetchKey) return;
+      this._renderTitleCluster(state, bundle);
+    })();
+    state._titleFetchInflight = p;
     try {
-      bundle = await this._fetchWeatherBundle(state.journalDateKey);
-    } catch (e) {
-      console.warn('[Weather & Moon] journal date fetch', e);
+      await p;
+    } finally {
+      if (state._titleFetchInflight === p) state._titleFetchInflight = null;
     }
-    if (!this._panelStates.has(state.panelId)) return;
-    this._renderTitleCluster(state, bundle);
+    return p;
   }
 
   _disposePanel(panelId) {
@@ -4415,7 +4481,7 @@ class Plugin extends AppPlugin {
         .wm-status-readout--muted { opacity: 0.55; }
         .wm-status-temps { font-weight: 600; }
         .wm-status-sep { opacity: 0.5; font-weight: 400; }
-        .wm-status-dot { opacity: 0.35; margin: 0 0.35em; }
+        .wm-status-dot { opacity: 0.58; margin: 0 0.4em; font-weight: 600; }
         .wm-status-cond { font-weight: 450; }
         .wm-status-moon { opacity: 0.78; }
 
@@ -4424,34 +4490,44 @@ class Plugin extends AppPlugin {
           z-index: 200000;
           display: flex;
           flex-direction: column;
-          align-items: flex-start;
+          align-items: stretch;
           max-width: min(420px, calc(100vw - 16px));
           pointer-events: auto;
-        }
-        .wm-card {
-          width: 100%;
-          --wm-text-indent: 32px;
-          max-height: min(340px, 52vh);
-          overflow-y: auto;
-          padding: 10px 12px 12px;
           border-radius: 12px;
           border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-          background: color-mix(in srgb, Canvas 42%, transparent);
+          background: color-mix(in srgb, Canvas 78%, transparent);
           color: CanvasText;
-          -webkit-backdrop-filter: blur(18px) saturate(1.25);
-          backdrop-filter: blur(18px) saturate(1.25);
+          -webkit-backdrop-filter: blur(20px) saturate(1.3);
+          backdrop-filter: blur(20px) saturate(1.3);
           box-shadow:
             0 0 0 1px color-mix(in srgb, CanvasText 8%, transparent),
             0 -6px 28px color-mix(in srgb, CanvasText 18%, transparent),
             0 0 22px color-mix(in srgb, Highlight 24%, transparent);
+          overflow: hidden;
+          isolation: isolate;
+        }
+        .wm-card {
+          width: 100%;
+          --wm-text-indent: 32px;
+          flex: 0 1 auto;
+          min-height: 0;
+          overflow-x: hidden;
+          overflow-y: visible;
+          padding: 10px 12px 8px;
+          border: none;
+          border-radius: 0;
+          background: transparent;
+          box-shadow: none;
+          -webkit-backdrop-filter: none;
+          backdrop-filter: none;
         }
         .wm-shell--title .wm-card {
-          max-height: none;
-          overflow: visible;
           --wm-text-indent: 32px;
         }
-        .wm-shell--title.wm-shell--scroll .wm-card {
+        .wm-shell--title.wm-shell--popover-expanded .wm-card,
+        .wm-shell--status .wm-card {
           overflow-y: auto;
+          overscroll-behavior: contain;
         }
         .wm-weather-emoji,
         .wm-sun-emoji {
@@ -4509,17 +4585,28 @@ class Plugin extends AppPlugin {
           display: flex;
           gap: 6px;
           overflow-x: auto;
-          padding-bottom: 4px;
+          overflow-y: hidden;
+          overscroll-behavior-x: contain;
+          padding-bottom: 2px;
+          margin-bottom: 2px;
         }
         .wm-hour {
           flex: 0 0 auto;
           text-align: center;
           font-size: 10px;
           opacity: 0.88;
-          min-width: 42px;
+          min-width: 46px;
         }
         .wm-hour-t { font-variant-numeric: tabular-nums; margin-top: 3px; }
-        .wm-hour-p { font-size: 9px; opacity: 0.62; margin-top: 2px; font-variant-numeric: tabular-nums; }
+        .wm-hour-temp { font-weight: 600; }
+        .wm-hour-meta {
+          font-size: 9px;
+          opacity: 0.62;
+          margin-top: 2px;
+          font-variant-numeric: tabular-nums;
+          line-height: 1.2;
+        }
+        .wm-status-meta { font-variant-numeric: tabular-nums; white-space: nowrap; }
         .wm-daily-row {
           display: grid;
           grid-template-columns: 2.2em 1fr auto auto auto;
@@ -4534,7 +4621,9 @@ class Plugin extends AppPlugin {
           display: flex;
           gap: 6px;
           overflow-x: auto;
-          padding: 2px 0 8px;
+          overflow-y: hidden;
+          overscroll-behavior-x: contain;
+          padding: 2px 0 6px;
           scrollbar-width: thin;
         }
         .wm-daily-tile {
@@ -4595,36 +4684,47 @@ class Plugin extends AppPlugin {
         .wm-blurb { opacity: 0.88; line-height: 1.35; }
         .wm-blurb--compact { font-style: italic; opacity: 0.82; }
         .wm-blurb-secondary { opacity: 0.72; font-size: 10px; }
-        .wm-expand-section { display: none; }
-        .wm-card--expanded .wm-expand-section { display: block; }
-        .wm-shell--status .wm-card { /* status opens expanded */ }
+        .wm-expand-section {
+          display: none;
+          flex: 0 1 auto;
+          min-height: 0;
+          overflow: hidden;
+          padding: 2px 12px 6px;
+          background: transparent;
+        }
+        .wm-shell--popover-expanded .wm-card {
+          border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+        }
+        .wm-shell--popover-expanded .wm-expand-section,
         .wm-shell--status .wm-expand-section { display: block; }
         .wm-shell--status .wm-expand-btn { display: none; }
         .wm-expand-btn {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          width: calc(100% - var(--wm-text-indent, 32px));
-          margin-left: var(--wm-text-indent, 32px);
-          margin-top: 4px;
-          padding: 6px 0 2px;
+          justify-content: center;
+          width: 100%;
+          margin: 0;
+          padding: 0 0 2px;
           border: none;
           background: transparent;
-          color: color-mix(in srgb, CanvasText 72%, Canvas);
+          color: color-mix(in srgb, CanvasText 70%, Canvas);
           cursor: pointer;
           font: inherit;
-          font-size: 11px;
-          font-weight: 500;
-          text-align: left;
+          line-height: 1;
+          flex-shrink: 0;
         }
         .wm-expand-btn:hover { color: CanvasText; }
         .wm-expand-chevron {
-          display: inline-block;
-          font-size: 12px;
-          opacity: 0.7;
-          transition: transform 0.15s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          line-height: 0;
+          opacity: 0.82;
         }
-        .wm-card--expanded .wm-expand-chevron { transform: rotate(180deg); }
+        .wm-expand-chevron-svg {
+          display: block;
+          overflow: visible;
+        }
         .wm-charts { margin: 8px 0 4px; }
         .wm-chart-tabs { display: flex; gap: 4px; margin-bottom: 6px; }
         .wm-chart-tab {
@@ -4831,12 +4931,12 @@ class Plugin extends AppPlugin {
     shell.setAttribute('aria-label', 'Weather forecast');
 
     const card = document.createElement('div');
-    card.className = 'wm-card' + (statusExpanded ? ' wm-card--expanded' : '');
+    card.className = 'wm-card';
+    const units = this._settings.units;
 
     if (!bundle) {
       card.innerHTML = `<div style="padding:8px;opacity:0.75;font-size:12px;">Could not load weather.</div>`;
     } else {
-      const units = this._settings.units;
       const isToday = targetKey === wmTodayKey();
       const hi = wmFormatTemp(bundle.hi, units);
       const lo = wmFormatTemp(bundle.lo, units);
@@ -4877,20 +4977,25 @@ class Plugin extends AppPlugin {
 
       this._appendPopoverMoon(card, moon);
       this._appendPopoverHourly(card, bundle, units);
-
-      const hasExpandable =
-        !bundle.isHistorical &&
-        ((bundle.hourlyChart || bundle.hourly)?.length || bundle.daily?.length);
-      if (hasExpandable) {
-        this._appendPopoverExpandSection(card, bundle, units, useGlobalWx);
-      }
-
-      if (source === 'title' && hasExpandable) {
-        this._appendExpandToggle(card, () => reposition(), true);
-      }
     }
 
+    const hasExpandable =
+      bundle &&
+      !bundle.isHistorical &&
+      ((bundle.hourlyChart || bundle.hourly)?.length || bundle.daily?.length);
+    const expandHost = document.createElement('div');
+    expandHost.className = 'wm-expand-section';
+
     shell.appendChild(card);
+    if (hasExpandable) {
+      shell.appendChild(expandHost);
+      if (statusExpanded) {
+        shell.classList.add('wm-shell--popover-expanded');
+        this._fillExpandSection(expandHost, bundle, units, useGlobalWx);
+      } else {
+        this._appendExpandToggle(shell, card, expandHost, bundle, units, useGlobalWx, () => reposition());
+      }
+    }
 
     const NS = 'http://www.w3.org/2000/svg';
     const caret = document.createElementNS(NS, 'svg');
@@ -4936,7 +5041,6 @@ class Plugin extends AppPlugin {
 
       shell.classList.toggle('wm-shell--below', placeBelow);
       shell.classList.toggle('wm-shell--above', !placeBelow);
-      shell.classList.toggle('wm-shell--scroll', true);
 
       if (placeBelow) {
         shell.style.top = `${Math.round(r.bottom + gap)}px`;
@@ -4947,9 +5051,18 @@ class Plugin extends AppPlugin {
       }
       shell.style.left = `${Math.round(left)}px`;
 
+      const expanded = shell.classList.contains('wm-shell--popover-expanded');
       const avail = placeBelow ? spaceBelow : spaceAbove;
-      card.style.maxHeight = `${Math.min(560, Math.max(140, avail - gap - 10))}px`;
-      card.style.overflow = 'auto';
+      if (expanded || source === 'status') {
+        const chevronH = source === 'title' && hasExpandable ? 22 : 0;
+        const maxH = Math.min(560, Math.max(140, avail - gap - chevronH - 12));
+        card.style.maxHeight = `${maxH}px`;
+        card.style.overflowY = 'auto';
+      } else {
+        card.style.maxHeight = '';
+        card.style.overflowY = 'visible';
+      }
+      card.style.overflowX = 'hidden';
 
       const anchorCenter = r.left + r.width / 2;
       const caretW = 20;
@@ -4971,15 +5084,23 @@ class Plugin extends AppPlugin {
     this._boundDocKey = (ev) => {
       if (ev.key === 'Escape') this._closePopover();
     };
-    this._boundWinResize = () => position();
-    this._boundWinScroll = () => position();
+    let posRaf = null;
+    const positionSoon = () => {
+      if (posRaf) return;
+      posRaf = requestAnimationFrame(() => {
+        posRaf = null;
+        position();
+      });
+    };
+    this._boundWinResize = () => positionSoon();
+    this._boundWinScroll = () => positionSoon();
 
     setTimeout(() => {
       document.addEventListener('mousedown', this._boundDocMouse, true);
       document.addEventListener('click', this._boundDocClick, true);
       document.addEventListener('keydown', this._boundDocKey, true);
       window.addEventListener('resize', this._boundWinResize);
-      window.addEventListener('scroll', this._boundWinScroll, true);
+      window.addEventListener('scroll', this._boundWinScroll, { capture: true, passive: true });
     }, 0);
 
     this._startLockObserver();
