@@ -801,6 +801,11 @@ class DawnWeather {
     if (boot?.enqueue) boot.enqueue(hydrate, { id: 'wm:hydrate', tier: 'idle', delayMs: 4000 });
     else setTimeout(() => void hydrate(), 4000);
     this._subscribeEvents();
+    try {
+      globalThis.__dawnWm = {
+        remountTitles: () => this._remountAllTitles(),
+      };
+    } catch (_) {}
   }
 
   _wmOnDemand(id, fn) {
@@ -837,6 +842,9 @@ class DawnWeather {
   }
 
   detach() {
+    try {
+      if (globalThis.__dawnWm?.remountTitles) delete globalThis.__dawnWm;
+    } catch (_) {}
     for (const id of this._eventIds || []) {
       try {
         this.events.off(id);
@@ -1959,9 +1967,9 @@ class DawnWeather {
   }
 
   _scheduleTitleRetry(state) {
-    if (!state || (state._titleTries || 0) >= 4) return;
+    if (!state || (state._titleTries || 0) >= 14) return;
     state._titleTries = (state._titleTries || 0) + 1;
-    const wait = 140 * state._titleTries;
+    const wait = 160 * state._titleTries;
     setTimeout(() => {
       if (!this._panelStates.has(state.panelId)) return;
       const panel = state.panel;
@@ -1971,6 +1979,22 @@ class DawnWeather {
       this._mountTitleCluster(state, rec, el);
       if (!state.titleCluster) this._scheduleTitleRetry(state);
     }, wait);
+  }
+
+  /** Called after JHS cold-home expand — h1 chrome may appear late. */
+  _remountAllTitles() {
+    for (const [, st] of this._panelStates) {
+      try {
+        st._titleTries = 0;
+        const panel = st.panel;
+        const rec = panel?.getActiveRecord?.();
+        const el = panel?.getElement?.();
+        if (!this._isJournalRecord(rec, el)) continue;
+        this._mountTitleCluster(st, rec, el);
+        if (!st.titleCluster) this._scheduleTitleRetry(st);
+        else this._ensureTitleAnchorObserver(st, el, rec);
+      } catch (_) {}
+    }
   }
 
   _ensureTitleAnchorObserver(state, panelEl, record) {
