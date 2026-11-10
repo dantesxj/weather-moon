@@ -3,5 +3,6 @@
   "name": "Weather & Moon",
   "icon": "ti-cloud",
   "description": "Journal weather icons (matched to page date), status bar readout (today), and frosted forecast popover. Open-Meteo; settings in Plugin Backend.",
-  "custom": {}
+  "custom": {},
+  "version": "0.1.0"
 }
